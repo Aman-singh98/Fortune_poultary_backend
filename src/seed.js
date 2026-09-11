@@ -140,7 +140,7 @@ const WAGE_MASTERS = [
 //    below is seeded with one.
 // ---------------------------------------------------------------------------
 const EMPLOYEES = [
-  { key: "EMP1", labourId: "LB1001", name: "Rajesh Kumar", phone: "9812300001", siteCode: "FPF", employeeType: "PERMANENT", wageMasterKey: "WM_PERM_A", photoUrl: "https://i.pravatar.cc/150?img=12" },
+  { key: "EMP1", labourId: "LB1001", name: "Rajesh Kumar", phone: "9812300001", siteCode: "FPF", employeeType: "PERMANENT", wageMasterKey: "WM_PERM_A", photoUrl: "https://i.pravatar.cc/150?img=12", designation: "Farm Manager", basicSalary: 25000, allSites: true, remarks: "Oversees operations across all sites" },
   { key: "EMP2", labourId: "LB1002", name: "Sunita Devi", phone: "9812300002", siteCode: "FPF", employeeType: "PERMANENT", wageMasterKey: "WM_PERM_FPF", isActive: false },
   { key: "EMP3", labourId: "LB1003", name: "Mahender Singh", phone: "9812300003", siteCode: "FLF", employeeType: "WAGES", wagesSubCategory: "CONSTRUCTION_LABOUR", wageMasterKey: "WM_CONST_A" },
   { key: "EMP4", labourId: "LB1004", name: "Vikram Chauhan", phone: "9812300004", siteCode: "FLF", employeeType: "WAGES", wagesSubCategory: "CONSTRUCTION_LABOUR", wageMasterKey: "WM_CONST_FLF" },
@@ -194,8 +194,10 @@ const ATTENDANCE = [
 // 7. SALARY — 11 demo records covering a clean no-deduction case, each
 //    deduction type (Advance / Fine-fixed / Fine-percentage / Expense),
 //    multiple deductions on one salary, sales commission earnings, a
-//    holiday-days case, a leave-days case, and the same employee across
-//    two different pay cycles (month-to-month history).
+//    holiday-days case, a leave-days case, an incentive/bonus case, an
+//    expense-reimbursement case, a combined incentive+deduction case, and
+//    the same employee across two different pay cycles (month-to-month
+//    history).
 // ---------------------------------------------------------------------------
 const SALARIES = [
   {
@@ -230,8 +232,9 @@ const SALARIES = [
   },
   {
     employeeKey: "EMP7", month: 8, year: 2026,
-    earnings: { baseWage: 14300, overtimePay: 750, salesCommission: 0 }, grossEarning: 15050, netSalary: 13550,
+    earnings: { baseWage: 14300, overtimePay: 750, salesCommission: 0 }, grossEarning: 15050, netSalary: 13850,
     attendanceSummary: { presentDays: 26, overtimeHours: 15 },
+    incentives: [{ type: "EXPENSE", amount: 300, remark: "Reimbursement for fuel used on farm errand" }],
     deductions: [
       { type: "ADVANCE", amount: 1000, isPercentage: false, remark: "Advance towards festival expenses" },
       { type: "FINE", amount: 500, isPercentage: false, remark: "Missed safety briefing" },
@@ -239,8 +242,9 @@ const SALARIES = [
   },
   {
     employeeKey: "EMP9", month: 8, year: 2026,
-    earnings: { baseWage: 15600, overtimePay: 0, salesCommission: 465 }, grossEarning: 16065, netSalary: 16065,
+    earnings: { baseWage: 15600, overtimePay: 0, salesCommission: 465 }, grossEarning: 16065, netSalary: 17065,
     attendanceSummary: { presentDays: 26, overtimeHours: 0 },
+    incentives: [{ type: "INCENTIVE", amount: 1000, remark: "Top performer bonus - August sales" }],
     deductions: [],
   },
   {
@@ -800,11 +804,18 @@ async function upsertEmployee(def, { sites, wageMasters, users }) {
   }
   const emp = await Employee.create({
     labourId: def.labourId,
+    employeeCode: def.labourId.replace("LB", "EMP"),
     name: def.name,
     phone: def.phone,
+    designation: def.designation || (def.employeeType === "PERMANENT" ? "Staff" : "Labour"),
+    probationPeriod: def.probationPeriod ?? 0,
+    remarks: def.remarks || "",
     site: sites[def.siteCode]._id,
+    allSites: def.allSites || false,
+    sites: (def.extraSiteCodes || []).map((code) => sites[code]._id),
     employeeType: def.employeeType,
     wagesSubCategory: def.wagesSubCategory || null,
+    basicSalary: def.basicSalary || 0,
     wageMaster: def.wageMasterKey ? wageMasters[def.wageMasterKey]._id : null,
     isActive: def.isActive ?? true,
     photoUrl: def.photoUrl || null,
@@ -853,6 +864,7 @@ async function upsertSalary(def, { employees, users }) {
     (sum, d) => sum + (d.isPercentage ? (def.grossEarning * d.amount) / 100 : d.amount),
     0
   );
+  const totalIncentives = (def.incentives || []).reduce((sum, i) => sum + i.amount, 0);
   const record = await Salary.create({
     employee: employee._id,
     site: employee.site,
@@ -860,6 +872,8 @@ async function upsertSalary(def, { employees, users }) {
     year: def.year,
     earnings: def.earnings,
     grossEarning: def.grossEarning,
+    incentives: (def.incentives || []).map((i) => ({ ...i, addedBy: users["dipender@fortunepoultry.com"]._id })),
+    totalIncentives,
     deductions: (def.deductions || []).map((d) => ({ ...d, addedBy: users["dipender@fortunepoultry.com"]._id })),
     totalDeductions,
     netSalary: def.netSalary,

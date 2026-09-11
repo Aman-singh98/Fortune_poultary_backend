@@ -14,6 +14,10 @@ function dateKey(d) {
   return `${dt.getFullYear()}-${dt.getMonth() + 1}-${dt.getDate()}`;
 }
 
+function daysInMonth(month, year) {
+  return new Date(year, month, 0).getDate();
+}
+
 /**
  * Computes the effective amount a single deduction entry subtracts from gross earning.
  * Fixed deductions subtract `amount` directly; percentage-based deductions (only
@@ -27,16 +31,21 @@ export function deductionEffectiveAmount(deduction, grossEarning) {
 }
 
 /**
- * Recomputes totalDeductions and netSalary on a Salary document from its
- * current deductions array + grossEarning. Does not save.
+ * Recomputes totalIncentives, totalDeductions and netSalary on a Salary document
+ * from its current incentives/deductions arrays + grossEarning. Does not save.
+ * Net salary = grossEarning + totalIncentives - totalDeductions.
  */
 function recomputeTotals(salaryDoc) {
-  const total = salaryDoc.deductions.reduce(
+  const totalDeductions = salaryDoc.deductions.reduce(
     (sum, d) => sum + deductionEffectiveAmount(d, salaryDoc.grossEarning),
     0
   );
-  salaryDoc.totalDeductions = Math.round(total * 100) / 100;
-  salaryDoc.netSalary = Math.round((salaryDoc.grossEarning - salaryDoc.totalDeductions) * 100) / 100;
+  const totalIncentives = (salaryDoc.incentives || []).reduce((sum, i) => sum + i.amount, 0);
+
+  salaryDoc.totalDeductions = Math.round(totalDeductions * 100) / 100;
+  salaryDoc.totalIncentives = Math.round(totalIncentives * 100) / 100;
+  salaryDoc.netSalary =
+    Math.round((salaryDoc.grossEarning + salaryDoc.totalIncentives - salaryDoc.totalDeductions) * 100) / 100;
 }
 
 /**
@@ -57,17 +66,25 @@ export async function calculateMonthlySalary(employeeId, month, year, actingUser
     err.statusCode = 404;
     throw err;
   }
-  if (!employee.wageMaster) {
-    const err = new Error("This employee has no Wage Master assigned — cannot calculate salary.");
+  if (!employee.wageMaster && !employee.basicSalary) {
+    const err = new Error(
+      "This employee has no Basic Salary or Wage Master assigned — cannot calculate salary."
+    );
     err.statusCode = 400;
     throw err;
   }
 
   const { start, end } = monthRange(month, year);
-  const dayRate = employee.wageMaster.dayRate;
-  const otRate = employee.wageMaster.overtimeRatePerHour || 0;
-  const eggRate = employee.wageMaster.eggCommissionRate || 0;
-  const birdRate = employee.wageMaster.birdCommissionRate || 0;
+
+  // Basic Salary (when set) drives the per-day rate — this is the primary path for
+  // permanent employees. Overtime/commission rates still come from the Wage Master
+  // when one is also assigned; otherwise they default to 0.
+  const dayRate = employee.basicSalary
+    ? Math.round((employee.basicSalary / daysInMonth(month, year)) * 100) / 100
+    : employee.wageMaster.dayRate;
+  const otRate = employee.wageMaster?.overtimeRatePerHour || 0;
+  const eggRate = employee.wageMaster?.eggCommissionRate || 0;
+  const birdRate = employee.wageMaster?.birdCommissionRate || 0;
 
   const [attendanceRecords, approvedHolidays] = await Promise.all([
     Attendance.find({ employee: employee._id, date: { $gte: start, $lt: end } }),
@@ -162,6 +179,7 @@ export async function calculateMonthlySalary(employeeId, month, year, actingUser
       site: employee.site._id,
       month,
       year,
+      incentives: [],
       deductions: [],
       generatedBy: actingUserId,
     });
@@ -177,6 +195,33 @@ export async function calculateMonthlySalary(employeeId, month, year, actingUser
   };
   salary.grossEarning = grossEarning;
   salary.attendanceSummary = summary;
+
+  recomputeTotals(salary);
+
+  await salary.save();
+  return salary;
+}
+
+/**
+ * Appends an incentive/expense entry (bonus, incentive, or expense reimbursement
+ * paid to the employee) to an existing Salary document, requiring a mandatory
+ * remark, and recomputes net salary. Unlike deductions, these ADD to net salary.
+ */
+export async function addIncentive(salaryId, { type, amount, remark }, actingUserId) {
+  const salary = await Salary.findById(salaryId);
+  if (!salary) {
+    const err = new Error("Salary record not found");
+    err.statusCode = 404;
+    throw err;
+  }
+
+  salary.incentives.push({
+    type,
+    amount,
+    remark,
+    addedBy: actingUserId,
+    addedAt: new Date(),
+  });
 
   recomputeTotals(salary);
 

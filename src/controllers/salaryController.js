@@ -1,7 +1,12 @@
 import { z } from "zod";
 import Salary from "../models/Salary.js";
 import Employee from "../models/Employee.js";
-import { calculateMonthlySalary, addDeduction as addDeductionService } from "../services/salaryService.js";
+import {
+  calculateMonthlySalary,
+  addDeduction as addDeductionService,
+  addIncentive as addIncentiveService,
+} from "../services/salaryService.js";
+import { employeeWorksAtSite } from "../utils/siteAccess.js";
 import { asyncHandler, apiError, apiSuccess } from "../utils/apiResponse.js";
 
 const generateSchema = z.object({
@@ -17,9 +22,15 @@ const deductionSchema = z.object({
   remark: z.string().min(1, "A remark/reason is required for every deduction"),
 });
 
+const incentiveSchema = z.object({
+  type: z.enum(["INCENTIVE", "EXPENSE"]),
+  amount: z.number().positive(),
+  remark: z.string().min(1, "A remark/reason is required for every incentive/expense entry"),
+});
+
 async function assertEmployeeSiteAccess(user, employee) {
   if (user.role === "SUPER_ADMIN") return true;
-  return String(employee.site) === String(user.site);
+  return employeeWorksAtSite(employee, user.site);
 }
 
 // POST /api/salaries/generate — { employee, month, year }
@@ -60,6 +71,21 @@ export const addDeduction = asyncHandler(async (req, res) => {
 
   const updated = await addDeductionService(req.params.id, parsed.data, req.user._id);
   return apiSuccess(res, 200, updated, "Deduction added");
+});
+
+// POST /api/salaries/:id/incentive — { type, amount, remark }
+export const addIncentive = asyncHandler(async (req, res) => {
+  const parsed = incentiveSchema.safeParse(req.body);
+  if (!parsed.success) return apiError(res, 400, "Invalid incentive/expense payload", parsed.error.flatten());
+
+  const salary = await Salary.findById(req.params.id);
+  if (!salary) return apiError(res, 404, "Salary record not found");
+
+  const allowed = req.user.role === "SUPER_ADMIN" || String(salary.site) === String(req.user.site);
+  if (!allowed) return apiError(res, 403, "You cannot modify salary for another site's employee.");
+
+  const updated = await addIncentiveService(req.params.id, parsed.data, req.user._id);
+  return apiSuccess(res, 200, updated, "Incentive/expense added");
 });
 
 // GET /api/salaries?site=&month=&year=&employee=

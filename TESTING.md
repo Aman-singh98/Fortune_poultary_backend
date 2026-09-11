@@ -55,6 +55,8 @@ Covers the testing half of task A10 (Postman collection + manual smoke-test pass
 - [ ] `POST /api/salaries/generate` for an employee **without** a `wageMaster` assigned
   returns a clear 400, not a 500.
 - [ ] Every `POST /api/salaries/:id/deduction` **without** a `remark` returns **400**.
+- [ ] Every `POST /api/salaries/:id/incentive` **without** a `remark` returns **400**.
+- [ ] Adding an incentive/expense entry increases `netSalary` by the entry amount (`netSalary = grossEarning + totalIncentives - totalDeductions`).
 - [ ] `PATCH /api/leaves/:id/decision` as **Admin A** (not Super Admin) returns **403**.
 - [ ] Approving a leave writes `LEAVE`-status attendance records for the date range
   automatically (check via `GET /api/attendance` after approval).

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import Attendance from "../models/Attendance.js";
 import Employee from "../models/Employee.js";
+import { employeeWorksAtSite, siteVisibilityFilter } from "../utils/siteAccess.js";
 import { asyncHandler, apiError, apiSuccess } from "../utils/apiResponse.js";
 
 const STATUS_VALUES = [
@@ -23,6 +24,10 @@ const markSchema = z.object({
   eggsSold: z.number().nonnegative().optional().default(0),
   birdsSold: z.number().nonnegative().optional().default(0),
   remarks: z.string().optional().default(""),
+  // Which site this attendance is being recorded against. Needed for employees
+  // who work across multiple sites (allSites / extra sites) — defaults to the
+  // employee's home site when omitted.
+  site: z.string().optional(),
 });
 
 const markAllPresentSchema = z.object({
@@ -46,12 +51,19 @@ export const markAttendance = asyncHandler(async (req, res) => {
   const parsed = markSchema.safeParse(req.body);
   if (!parsed.success) return apiError(res, 400, "Invalid attendance payload", parsed.error.flatten());
 
-  const { employee: employeeId, date, ...rest } = parsed.data;
+  const { employee: employeeId, date, site: requestedSite, ...rest } = parsed.data;
 
   const employee = await Employee.findById(employeeId);
   if (!employee) return apiError(res, 404, "Employee not found");
 
-  const allowed = await assertSiteAccess(req.user, employee.site);
+  // Default to the employee's home site; for employees visible on multiple
+  // sites, allow attendance to be recorded against whichever site was passed in.
+  const targetSite = requestedSite || employee.site;
+  if (!employeeWorksAtSite(employee, targetSite)) {
+    return apiError(res, 403, "This employee is not assigned to that site.");
+  }
+
+  const allowed = await assertSiteAccess(req.user, targetSite);
   if (!allowed) return apiError(res, 403, "You cannot mark attendance for another site's employee.");
 
   const day = startOfDay(date);
@@ -61,7 +73,7 @@ export const markAttendance = asyncHandler(async (req, res) => {
     {
       $set: {
         ...rest,
-        site: employee.site,
+        site: targetSite,
         markedBy: req.user._id,
         markedAt: new Date(),
       },
@@ -83,7 +95,7 @@ export const markAllPresent = asyncHandler(async (req, res) => {
   if (!allowed) return apiError(res, 403, "You cannot mark attendance for another site.");
 
   const day = startOfDay(date);
-  const employees = await Employee.find({ site, isActive: true }).select("_id");
+  const employees = await Employee.find({ ...siteVisibilityFilter(site), isActive: true }).select("_id");
 
   const ops = employees.map((emp) => ({
     updateOne: {
@@ -156,9 +168,13 @@ export const attendanceSummary = asyncHandler(async (req, res) => {
     ? await Attendance.distinct("site", { date: day }).then((s) => s.length)
     : 1;
 
-  const totalLabour = await Employee.countDocuments(
-    req.user.role === "ADMIN" ? { site: req.user.site, isActive: true } : site ? { site, isActive: true } : { isActive: true }
-  );
+  const labourSiteFilter =
+    req.user.role === "ADMIN"
+      ? siteVisibilityFilter(req.user.site)
+      : site
+      ? siteVisibilityFilter(site)
+      : {};
+  const totalLabour = await Employee.countDocuments({ ...labourSiteFilter, isActive: true });
 
   const counts = {
     totalSites,

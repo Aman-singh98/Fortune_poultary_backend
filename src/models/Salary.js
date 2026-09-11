@@ -12,6 +12,17 @@ const deductionSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const incentiveSchema = new mongoose.Schema(
+  {
+    type: { type: String, enum: ["INCENTIVE", "EXPENSE"], required: true },
+    amount: { type: Number, required: true, min: 0 },
+    remark: { type: String, required: true, trim: true }, // mandatory reason
+    addedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    addedAt: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
 const salarySchema = new mongoose.Schema(
   {
     employee: { type: mongoose.Schema.Types.ObjectId, ref: "Employee", required: true },
@@ -25,6 +36,9 @@ const salarySchema = new mongoose.Schema(
       salesCommission: { type: Number, default: 0 },
     },
     grossEarning: { type: Number, default: 0 },
+
+    incentives: [incentiveSchema],
+    totalIncentives: { type: Number, default: 0 },
 
     deductions: [deductionSchema],
     totalDeductions: { type: Number, default: 0 },
