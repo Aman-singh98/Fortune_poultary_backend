@@ -85,7 +85,7 @@ export const listLeaves = asyncHandler(async (req, res) => {
   if (employee) filter.employee = employee;
 
   const leaves = await Leave.find(filter)
-    .populate("employee", "name labourId")
+    .populate("employee", "name labourId employeeCode employeeType")
     .populate("site", "name")
     .populate("requestedBy", "name")
     .populate("decidedBy", "name")

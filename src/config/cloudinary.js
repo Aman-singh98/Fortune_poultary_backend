@@ -9,4 +9,6 @@ cloudinary.config({
   secure: true,
 });
 
+console.log(process.env.CLOUDINARY_API_KEY, "process.env.CLOUDINARY_API_KEY");
+
 export default cloudinary;
